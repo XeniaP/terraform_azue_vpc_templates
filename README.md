@@ -1,0 +1,1 @@
+# terraform_azue_vpc_templates
