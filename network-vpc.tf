@@ -19,7 +19,7 @@ resource "azurerm_resource_group" "resourceGroup" {
 }
 
 resource "azurerm_virtual_network" "vnet_hub_vpn"{
-    name                = "vpn_gateway"
+    name                = "vpn_hub_gateway"
     address_space       =["10.0.0.0/16"]
     location            = azurerm_resource_group.resourceGroup.location
     resource_group_name = azurerm_resource_group.resourceGroup.name
@@ -34,6 +34,13 @@ resource "azurerm_subnet" "gw_subnet" {
     resource_group_name     = azurerm_resource_group.resourceGroup.name
     virtual_network_name    = azurerm_virtual_network.vnet_hub_vpn.name
     address_prefixes        = ["10.0.254.0/24"]
+}
+
+resource "azurerm_subnet" "default_subnet" {
+    name                    = "Subnet1"
+    resource_group_name     = azurerm_resource_group.resourceGroup.name
+    virtual_network_name    = azurerm_virtual_network.vnet_hub_vpn.name
+    address_prefixes        = ["10.0.0.0/24"]
 }
 
 resource "azurerm_public_ip" "vnet_gw_ip" {
@@ -64,7 +71,7 @@ resource "azurerm_virtual_network_gateway" "az_net_gw" {
         subnet_id = azurerm_subnet.gw_subnet.id
     }
 
-    depends_on = [ azurerm_public_ip.az_net_gw ]
+    depends_on = [ azurerm_public_ip.vnet_gw_ip ]
 }
 
 #Recursos AWS 
@@ -223,3 +230,97 @@ resource "aws_route_table_association" "rt_igw_association" {
     subnet_id = aws_subnet.pri_vpc_subnet1.id
     route_table_id = aws_route_table.priv_vpc_rt.id
 }
+
+#vnet workload
+resource "azurerm_virtual_network" "vnet_aro"{
+    name                = "aro"
+    address_space       =["10.61.0.0/22"]
+    location            = azurerm_resource_group.resourceGroup.location
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+
+    tags = {
+        environment = "Monex_Lab"
+    }
+}
+
+resource "azurerm_subnet" "example" {
+    for_each = var.subnets_aro
+    name = each.key
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+    virtual_network_name = azurerm_virtual_network.vnet_aro.name
+    address_prefixes = [each.value]
+}
+
+resource "azurerm_virtual_network" "vnet_desarrollo"{
+    name                = "Desarrollo"
+    address_space       =["10.7.0.0/22"]
+    location            = azurerm_resource_group.resourceGroup.location
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+
+    tags = {
+        environment = "Monex_Lab"
+    }
+}
+
+resource "azurerm_subnet" "desasubnet" {
+    name = "snet-dvm-desa-south-01"
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+    virtual_network_name = azurerm_virtual_network.vnet_desarrollo.name
+    address_prefixes = ["10.7.0.0/25"]
+}
+resource "azurerm_virtual_network" "vnet_prod"{
+    name                = "Produccion"
+    address_space       =["10.6.0.0/22"]
+    location            = azurerm_resource_group.resourceGroup.location
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+
+    tags = {
+        environment = "Monex_Lab"
+    }
+}
+resource "azurerm_subnet" "prodasubnet" {
+    name = "snet-dvm-prod-south-01"
+    resource_group_name = azurerm_resource_group.resourceGroup.name
+    virtual_network_name = azurerm_virtual_network.vnet_prod.name
+    address_prefixes = ["10.6.0.0/23"]
+}
+
+
+resource "azurerm_virtual_network_peering" "vpn_to_aro" {
+  name                      = "vpn-to-aro"
+  resource_group_name       = azurerm_resource_group.resourceGroup.name
+  virtual_network_name      = azurerm_virtual_network.vnet_hub_vpn.name
+  remote_virtual_network_id = azurerm_virtual_network.vnet_aro.id
+  allow_virtual_network_access = true
+  allow_forwarded_traffic      = true
+}
+
+resource "azurerm_virtual_network_peering" "aro_to_vpn" {
+  name                      = "aro-to-vpn"
+  resource_group_name       = azurerm_resource_group.resourceGroup.name
+  virtual_network_name      = azurerm_virtual_network.vnet_aro.name
+  remote_virtual_network_id = azurerm_virtual_network.vnet_hub_vpn.id
+  allow_virtual_network_access = true
+  allow_forwarded_traffic      = true
+}
+
+resource "azurerm_route_table" "vpn_hub_gateway_route_table" {
+  name                = "vpn-hub-gateway-route-table"
+  location            = azurerm_resource_group.resourceGroup.location
+  resource_group_name = azurerm_resource_group.resourceGroup.name
+}
+
+resource "azurerm_route" "route_to_aws" {
+  name                   = "route-to-aws"
+  resource_group_name    = azurerm_resource_group.resourceGroup.name
+  route_table_name       = azurerm_route_table.vpn_hub_gateway_route_table.name
+  address_prefix         = "192.168.0.0/16" # Ejemplo: "172.31.0.0/16"
+  next_hop_type          = "VirtualNetworkGateway"
+}
+
+resource "azurerm_subnet_route_table_association" "vpn_hub_gateway_subnet_association" {
+  subnet_id      = azurerm_subnet.gw_subnet.id # Asegúrate de reemplazar esto con el ID de tu subnet real
+  route_table_id = azurerm_route_table.vpn_hub_gateway_route_table.id
+}
+
+
